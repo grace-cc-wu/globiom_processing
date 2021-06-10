@@ -1,0 +1,155 @@
+---
+title: 'Rename SimU IDs'
+output: html_notebook
+---
+
+
+```{r}
+library(sf)
+library(GISTools)
+library(rgdal)
+require(ggplot2)
+library(dplyr)
+```
+
+## Read
+```{r}
+simU_dir <- "C:\\Users\\Grace\\Documents\\FABLE\\GLOBIOM\\SimU\\gis\\"
+simU_fn <- "SimU_all_select840_USstateSplit_proj.shp"
+simU <- st_read(paste(simU_dir, simU_fn, sep=""))
+```
+
+```{r}
+ggplot() + 
+  geom_sf(data = simU, size = 3, color = "black", fill = "cyan1") + 
+  ggtitle("SimUs") + 
+  coord_sf()
+```
+
+
+## update names
+```{r}
+## Get FID_SimU_a duplicates that need new names (i.e., get list of FID_SimU_a that occur more than once)
+count <- as.data.frame(table(simU$FID_SimU_a))
+count_df <- subset(count, Freq >1)
+## join the frequency column in count to the original simU dataframe
+simU_wFreq<- merge(simU, count, by.x = "FID_SimU_a", by.y = "Var1")
+
+## create a new empty column called SimUIn to hold the new SimUIDs
+simU_wFreq$SimUIDn <- NULL
+
+## For each FID_SimU_a with duplicates, 
+for(FID in count_df$Var1){
+  #print(FID)
+  ## retrieve the SimU corresponding to the FID
+  simuid_val <- simU_wFreq[simU_wFreq$FID_SimU_a == FID, ]$SimUID[1]
+  
+  ## get frequency
+  freq <- count_df[count_df$Var1 == FID,]$Freq
+  
+  ## create vector with new names using paste (it creates a list of names using the sequence 1-frequency)
+  SimUID_new_vector <- paste(simuid_val, seq(1, freq), sep= "_")
+  
+  ## Assign the new SimUIDs
+  simU_wFreq$SimUIDn[simU_wFreq$FID_SimU_a == FID] <- SimUID_new_vector
+  
+  ## newly added 11/13/19
+  ## Now assign the other SimUIDs that are repeats of the original SimUID
+  simU_wFreq_sub <- simU_wFreq[simU_wFreq$SimUID == simuid_val,]
+  simU_wFreq_sub_copy <- simU_wFreq_sub
+  
+  ## get newly assigned rows:
+  newRows <- filter(simU_wFreq, SimUIDn %in% SimUID_new_vector)
+  
+  ## Use newRows as lookup table for assigning new SimUIDn values in the simU_wFreq_sub_copy table based on Name_1 
+  # https://stackoverflow.com/questions/35636315/replace-values-in-a-dataframe-based-on-lookup-table
+  simU_wFreq_sub_copy$SimUIDn <- newRows$SimUIDn[match(simU_wFreq_sub$NAME_1, newRows$NAME_1)]
+
+  ## assign new simUIDn values to original dataframe
+  simU_wFreq$SimUIDn[simU_wFreq$SimUID == simuid_val] <- simU_wFreq_sub_copy$SimUIDn  
+  
+  ## check to see if there are rows with old SimUIDs and create a news ones for those rows
+  n_missingSimUIDn <- nrow(simU_wFreq_sub_copy[!grepl("_",simU_wFreq_sub_copy$SimUIDn),])
+  SimUIDn_missing <- paste(simuid_val, seq(freq+1, n_missingSimUIDn-1 + freq+1), sep= "_")
+  ## assign the missing simUID
+  simU_wFreq$SimUIDn[(simU_wFreq$SimUID == simuid_val & !grepl("_",simU_wFreq$SimUIDn))] <- SimUIDn_missing
+
+}
+
+## Assign the rest of the rows to the original simUID
+simU_wFreq <- simU_wFreq %>% mutate(SimUIDn = ifelse(is.na(SimUIDn), SimUID, SimUIDn))
+
+### code that didn't work, but may still be useful for later:
+#test <- simU %>% 
+#  arrange(FID_SimU_a) %>% 
+#  group_by(FID_SimU_a) %>% 
+#  mutate(SimUID_new = ifelse(FID_SimU_a %in% count_df$Var1, paste0(SimUID, "_", ), SimUID)
+         
+#newSimUids <- with(simU_wFreq, ave(as.character(simU_wFreq$SimUID), simU_wFreq$FID_SimU_a, FUN=function(x) make.unique(x,sep="_")))
+#simU_wFreq$SimUID_state <- newSimUids
+
+## replace spaces with underscores in state names
+statesList<- gsub(" ", "_" ,simU_wFreq$NAME_1)
+simU_wFreq$NAME_1 <- statesList
+
+## Write new output shapefile
+st_write(simU_wFreq, paste(simU_dir, paste(gsub(".shp", "", simU_fn), "newSUcol_v3.shp", sep="_"), sep=""))
+
+#simU_wFreq_spdf <- as(simU_wFreq, 'Spatial')
+#writeOGR(obj=simU_wFreq_spdf, dsn=simU_dir, layer= paste(gsub(".shp", "", simU_fn), "newSUcol.shp", sep="_"), driver="ESRI Shapefile")
+```
+
+## Extract new SimUIDs for creating sets in GAMS
+```{r}
+simU_dir <- "C:\\Users\\Grace\\Documents\\FABLE\\GLOBIOM\\SimU\\gis\\"
+simU_fn_new <- "SimU_all_select840_USstateSplit_proj_newSUcol_v2.shp"
+simU_new <- st_read(paste(simU_dir, simU_fn_new, sep=""))
+```
+
+```{r}
+SimUIDn <- simU_new$SimUIDn
+newIDs <- grep("_", SimUIDn)
+SimUIDn_unique <- unique(SimUIDn[newIDs])
+## https://stackoverflow.com/questions/46644450/write-table-not-separating-by-comma
+## must delete the last comma
+write.table(SimUIDn_unique, file = paste("C:\\Users\\Grace\\Documents\\FABLE\\GLOBIOM\\SimU\\", "simU_newOnly.txt", sep=""), sep = ",", row.names=FALSE, na="", col.names= FALSE, quote=TRUE, eol = ",")
+#cat(SimUIDn[newIDs], file = paste("C:\\Users\\Grace\\Documents\\FABLE\\GLOBIOM\\SimU\\", "simU_newOnly.txt", sep=""), sep = ",")
+```
+
+## Extract old simUIDs
+```{r}
+SimUID_old <- unique((simU_new[newIDs,])$SimUID)
+write.table(SimUID_old, file = paste("C:\\Users\\Grace\\Documents\\FABLE\\GLOBIOM\\SimU\\", "simU_oldOnly.txt", sep=""), sep = ",", row.names=FALSE, na="", col.names= FALSE, quote=FALSE, eol = ",")
+```
+
+## Create Many-to-many mapping
+```{r}
+id = 36
+mappingCol <- character()
+for(id in SimUID_old){
+  ## get the corresponding new SimuIDs
+  id_new <- unique(simU_new[simU_new$SimUID ==id,]$SimUIDn)
+  ## paste to construct the map syntax using toSTring to convert the list to string
+  out <- paste(id, ".(", toString(id_new), ")", sep="")
+  mappingCol <-c(mappingCol, out)
+}
+mappingCol
+
+write.table(mappingCol, file = paste("C:\\Users\\Grace\\Documents\\FABLE\\GLOBIOM\\SimU\\", "mappingNewOldSimU.txt", sep=""), sep = ",", row.names=FALSE, na="", col.names= FALSE, quote=FALSE, eol = ",")
+```
+
+## get list of state names for COUNTRY set
+```{r}
+statesList <- gsub(" ", "_" ,levels(unique(simU_new$NAME_1)))
+statesList
+
+write.table(statesList, file = paste("C:\\Users\\Grace\\Documents\\FABLE\\GLOBIOM\\SimU\\", "stateNames.txt", sep=""), sep = ",", row.names=FALSE, na="", col.names= FALSE, quote=FALSE, eol = ",")
+```
+
+
+
+
+
+
+
+
