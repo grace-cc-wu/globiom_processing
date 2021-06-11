@@ -12,7 +12,10 @@ library(rgdal)
 require(ggplot2)
 library(dplyr)
 ```
-
+=============================================================
+=============================================================
+# A. Load non GAMS inputs
+=============================================================
 ## Read simU shapefile
 ```{r}
 simU_dir <- "../../SimU/gis/"
@@ -28,6 +31,7 @@ simU_new_sub <- simU_new %>%
 
 unique(simU_new_sub$STATE)
 ```
+=============================================================
 ## read state abbreviations
 ```{r}
 abbv <- read.csv("inputs/stateAbbrev.csv", header=TRUE)
@@ -42,8 +46,10 @@ simU_new_sub_abbrev <- simU_new_sub %>%
 ## check join
 filter(simU_new_sub_abbrev, is.na(STATE_Abbrev))
 ```
-
-
+=============================================================
+=============================================================
+# B. UPDATE GAMS map: SimUIDLUIDHRU_map in Model/SimUIDl_map.gms
+Requires you to run part A
 
 ## read gams map as txt file
 ```{r}
@@ -51,7 +57,7 @@ mapping <- read.csv("inputs/SimUIDLUIDHRU_map.txt", sep = ".", header=FALSE)
 colnames(mapping) <- c("SimUID", "Country", "LU", "alt", "slope", "soil")
 ```
 
-## subset to US and join with simUID vector attribute table
+## join with simUID vector attribute table and write to csv
 ```{r}
 ## join GAMS map to SimUID attribute table using outer join
 mapping.join <- mapping %>%
@@ -69,10 +75,9 @@ mapping.join.USA <- mapping.join %>%
 
 ## check to see if there are any unmatched rows 
 filter(mapping.join.USA, is.na(alt))
-```
 
+################
 ## write to csv, use . as separator for SimUIDLUIDHRU_map.txt
-```{r}
 ## drop the STATE and SimUIDn variables/columns
 mapping.join.USA.final <- mapping.join.USA %>% select(-c(STATE, SimUIDn, shorthand, STATE_Abbrev))
 
@@ -80,13 +85,77 @@ mapping.join.USA.final <- mapping.join.USA %>% select(-c(STATE, SimUIDn, shortha
 write.table(mapping.join.USA.final, "outputs/SimUIDLUIDHRU_map.txt", col.names = FALSE, row.names = FALSE, sep = ". \t", quote=FALSE)
 ```
 
-## write to csv, use . as separator for SimUIDLUID_map.txt
+=============================================================
+=============================================================
+# C. Update SimUIDLUID_map in sets_colrow.gms
+Requires you to run part A and B
 ```{r}
 ## drop the STATE and SimUIDn variables/columns
 mapping.join.USA.final.SimUIDLUID_map <- mapping.join.USA %>% 
   select(c(SimUID, LU)) %>%
   distinct()
 
-## write to CSV
+## write to csv, use . as separator for SimUIDLUID_map
 write.table(mapping.join.USA.final.SimUIDLUID_map, "outputs/SimUIDLUID_map.txt", col.names = FALSE, row.names = FALSE, sep = ". \t", quote=FALSE)
 ```
+
+=============================================================
+=============================================================
+# D. CREATE NEW SimUID to state map: map_US_SIMUID_state in sets_US.gms
+Requires you to run part A and B
+```{r}
+mapping.join.USA.final.SimUIDstate_map <- mapping.join.USA %>% 
+  select(c(SimUID, Country)) %>%
+  distinct() %>%
+  filter(Country %in% abbv$STATE_Abbrev)
+
+write.table(mapping.join.USA.final.SimUIDstate_map, "outputs/map_US_SIMUID_state.txt", col.names = FALSE, row.names = FALSE, sep = ".\t", quote=FALSE)
+```
+
+=============================================================
+=============================================================
+# E. Update GAMS map: SimUID_MAP(SimUID,ALLCOUNTRY,ColRow30,AltiClass,SlpClass,SoilClass) in Data/SimUID_map.gms
+Requires you to run part A
+```{r}
+mapping <- read.csv("inputs/SimUID_MAP.txt", sep = ".", header=FALSE)
+colnames(mapping) <- c("SimUID", "ALLCOUNTRY", "ColRow30", "AltiClass", "SlpClass", "SoilClass")
+```
+
+## join with simUID vector attribute table and write to csv
+```{r}
+## join GAMS map to SimUID attribute table using outer join and trim trailing white space
+mapping.join <- mapping %>%
+  full_join(simU_new_sub_abbrev, by = c("SimUID" = "SimUID")) %>%
+  ## Country names have trailing white spaces, use trimw function to remove trailing 
+  mutate(ALLCOUNTRY = trimws(ALLCOUNTRY, "right")) %>%
+  mutate(AltiClass = trimws(AltiClass, "right")) #%>%
+  #filter(Country == "USA")
+
+## replace SimUID column with SimUIDn column if it's USA
+## replace Country column with STATE column if it's USA
+mapping.join.USA <- mapping.join %>%
+  mutate(SimUID = if_else(ALLCOUNTRY == "USA", as.character(SimUIDn), as.character(SimUID))) %>%
+  mutate(ALLCOUNTRY = if_else(ALLCOUNTRY == "USA", as.character(STATE_Abbrev), as.character(ALLCOUNTRY)))
+
+## check to see if there are any unmatched rows 
+filter(mapping.join.USA, is.na(AltiClass))
+
+################
+## write to csv, use . as separator for SimUID_MAP.txt
+
+## drop the STATE and SimUIDn variables/columns
+mapping.join.USA.final <- mapping.join.USA %>% select(-c(STATE, SimUIDn, shorthand, STATE_Abbrev))
+
+## write to CSV
+write.table(mapping.join.USA.final, "outputs/SimUID_MAP.txt", col.names = FALSE, row.names = FALSE, sep = ". \t", quote=FALSE)
+```
+
+=============================================================
+=============================================================
+## F. CREATE NEW state abbrev: US_states(ANYREGION) in sets_US.gms
+Requires you to run part A
+```{r}
+abbv
+write.table(abbv$STATE_Abbrev, "outputs/stateAbbrevList.txt", col.names = FALSE, row.names = FALSE, sep = ",", quote=FALSE, eol = ",")
+```
+
