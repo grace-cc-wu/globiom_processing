@@ -1,0 +1,92 @@
+---
+title: "R Notebook"
+output: html_notebook
+
+purpose: replace USA with states and add additional rows for new simUIDs in SimUIDLUIDHRU_map in SimUIDlu_map.gms
+---
+
+```{r}
+library(sf)
+library(GISTools)
+library(rgdal)
+require(ggplot2)
+library(dplyr)
+```
+
+## Read simU shapefile
+```{r}
+simU_dir <- "../../SimU/gis/"
+simU_fn_new <- "SimU_all_select840_USstateSplit_proj_newSUcol_v2.shp"
+simU_new <- st_read(paste(simU_dir, simU_fn_new, sep=""))
+colnames(simU_new)
+## NAME_1 = state names
+## SimuIDn = new simulation unit ID
+
+## subset to select columns
+simU_new_sub <- simU_new %>%
+  select(c(NAME_1, SimUID, SimUIDn), STATE = NAME_1)
+
+unique(simU_new_sub$STATE)
+```
+## read state abbreviations
+```{r}
+abbv <- read.csv("inputs/stateAbbrev.csv", header=TRUE)
+colnames(abbv) <- c("STATE", "shorthand", "STATE_Abbrev")
+
+## join to SimU data frame and convert to nonspatial dataframe
+simU_new_sub_abbrev <- simU_new_sub %>% 
+  as.data.frame() %>%
+  select(-geometry) %>%
+  right_join(abbv, by = c("STATE" = "STATE"))
+
+## check join
+filter(simU_new_sub_abbrev, is.na(STATE_Abbrev))
+```
+
+
+
+## read gams map as txt file
+```{r}
+mapping <- read.csv("inputs/SimUIDLUIDHRU_map.txt", sep = ".", header=FALSE)
+colnames(mapping) <- c("SimUID", "Country", "LU", "alt", "slope", "soil")
+```
+
+## subset to US and join with simUID vector attribute table
+```{r}
+## join GAMS map to SimUID attribute table using outer join
+mapping.join <- mapping %>%
+  full_join(simU_new_sub_abbrev, by = c("SimUID" = "SimUID")) %>%
+  ## Country names have trailing white spaces, use trimw function to remove trailing 
+  mutate(Country = trimws(Country, "right")) %>%
+  mutate(alt = trimws(alt, "right")) #%>%
+  #filter(Country == "USA")
+
+## replace SimUID column with SimUIDn column if it's USA
+## replace Country column with STATE column if it's USA
+mapping.join.USA <- mapping.join %>%
+  mutate(SimUID = if_else(Country == "USA", as.character(SimUIDn), as.character(SimUID))) %>%
+  mutate(Country = if_else(Country == "USA", as.character(STATE_Abbrev), as.character(Country)))
+
+## check to see if there are any unmatched rows 
+filter(mapping.join.USA, is.na(alt))
+```
+
+## write to csv, use . as separator for SimUIDLUIDHRU_map.txt
+```{r}
+## drop the STATE and SimUIDn variables/columns
+mapping.join.USA.final <- mapping.join.USA %>% select(-c(STATE, SimUIDn, shorthand, STATE_Abbrev))
+
+## write to CSV
+write.table(mapping.join.USA.final, "outputs/SimUIDLUIDHRU_map.txt", col.names = FALSE, row.names = FALSE, sep = ". \t", quote=FALSE)
+```
+
+## write to csv, use . as separator for SimUIDLUID_map.txt
+```{r}
+## drop the STATE and SimUIDn variables/columns
+mapping.join.USA.final.SimUIDLUID_map <- mapping.join.USA %>% 
+  select(c(SimUID, LU)) %>%
+  distinct()
+
+## write to CSV
+write.table(mapping.join.USA.final.SimUIDLUID_map, "outputs/SimUIDLUID_map.txt", col.names = FALSE, row.names = FALSE, sep = ". \t", quote=FALSE)
+```
