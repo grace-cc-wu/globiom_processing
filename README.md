@@ -1,2 +1,2 @@
 # globiom_processing
-Code for pre- or post- processing data for globiom
+Scripts for pre- processing data for globiom
